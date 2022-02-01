@@ -52,6 +52,7 @@ module Cardano.Ledger.Address
   )
 where
 
+import Debug.Trace (trace)
 import Cardano.Binary
   ( Decoder,
     DecoderError (..),
@@ -443,11 +444,14 @@ word7sToWord64 = foldl' f 0
 getVariableLengthWord64 :: Get Word64
 getVariableLengthWord64 = word7sToWord64 <$> getWord7s
 
-decoderFromGet :: Text -> Get a -> Decoder s a
+decoderFromGet :: Show a => Text -> Get a -> Decoder s a
 decoderFromGet name get = do
   bytes <- fromCBOR
   case B.runGetOrFail get bytes of
-    Right (_remaining, _offset, value) -> pure value
+    Right (remaining, _offset, value) ->
+      if BSL.null remaining
+        then pure value
+        else trace ("\nJUNK\n" <> show value <> "\nJUNK\n") (pure value)
     Left (_remaining, _offset, message) ->
       cborError (DecoderErrorCustom name $ fromString message)
 
