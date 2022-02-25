@@ -31,7 +31,7 @@ import Cardano.Ledger.Alonzo.Tx
 import Cardano.Ledger.Alonzo.TxBody
   ( TxOut (..),
   )
-import Cardano.Ledger.Alonzo.TxInfo (FailureDescription (..), ScriptResult (..))
+import Cardano.Ledger.Alonzo.TxInfo (FailureDescription (..), PlutusDebug (..), ScriptResult (..))
 import Cardano.Ledger.Alonzo.TxWitness
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Era (Crypto, Era, ValidateScript (..))
@@ -266,9 +266,12 @@ instance Arbitrary FailureDescription where
         PlutusFailure <$> (pack <$> arbitrary) <*> arbitrary
       ]
 
+instance Arbitrary PlutusDebug where
+  arbitrary = PlutusDebug <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+
 instance Arbitrary ScriptResult where
   arbitrary =
-    oneof [pure Passes, Fails <$> arbitrary]
+    oneof [Passes <$> arbitrary, Fails <$> arbitrary]
 
 instance Arbitrary TagMismatchDescription where
   arbitrary =

@@ -189,9 +189,9 @@ explainTest :: Script (AlonzoEra StandardCrypto) -> ShouldSucceed -> [P.Data] ->
 explainTest (script@(PlutusScript _ bytes)) mode ds =
   let cost = fromMaybe (error "corrupt default cost model") P.defaultCostModelParams
    in case (mode, runPLCScript alonzo PlutusV1 (CostModel cost) bytes (ExUnits 100000000 10000000) ds) of
-        (ShouldSucceed, Passes) -> assertBool "" True
+        (ShouldSucceed, Passes _) -> assertBool "" True
         (ShouldSucceed, Fails xs) -> assertBool (show xs) (trace (show (head xs)) False)
-        (ShouldFail, Passes) -> assertBool ("Test that should fail, passes: " ++ show script) False
+        (ShouldFail, Passes _) -> assertBool ("Test that should fail, passes: " ++ show script) False
         (ShouldFail, Fails _) -> assertBool "" True
 explainTest _other _mode _ds = assertBool "BAD Script" False
 

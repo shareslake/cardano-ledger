@@ -38,7 +38,6 @@ import Cardano.Ledger.Alonzo.TxInfo
     HasTxInfo (..),
     ScriptResult (..),
     TranslationError (..),
-    andResult,
     runPLCScript,
     valContext,
   )
@@ -239,13 +238,13 @@ evalScripts ::
   tx ->
   [(AlonzoScript.Script era, [Data era], ExUnits, CostModel)] ->
   ScriptResult
-evalScripts _tx [] = Passes
+evalScripts _tx [] = Passes []
 evalScripts tx ((AlonzoScript.TimelockScript timelock, _, _, _) : rest) =
   lift (evalTimelock vhks (getField @"vldt" (getField @"body" tx)) timelock)
-    `andResult` evalScripts tx rest
+    <> evalScripts tx rest
   where
     vhks = Set.map witKeyHash (txwitsVKey' (getField @"wits" tx))
-    lift True = Passes
+    lift True = Passes []
     lift False = Fails [OnePhaseFailure . pack . show $ timelock]
 evalScripts tx ((AlonzoScript.PlutusScript lang pscript, ds, units, cost) : rest) =
   let beginMsg =
@@ -262,7 +261,7 @@ evalScripts tx ((AlonzoScript.PlutusScript lang pscript, ds, units, cost) : rest
             "END",
             "res = " <> show res
           ]
-   in (traceEvent endMsg res) `andResult` evalScripts tx rest
+   in (traceEvent endMsg res) <> evalScripts tx rest
 
 -- Collect information (purpose and hash) about all the scripts in a Tx.
 -- THE SPEC CALLS FOR A SET, BUT THAT NEEDS A BUNCH OF ORD INSTANCES (DCert)

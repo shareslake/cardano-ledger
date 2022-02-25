@@ -101,7 +101,7 @@ alonzoSpecificProps SourceSignalTarget {source = chainSt, signal = block} =
             expectedPScripts = collectedScripts == suppliedPScrpts
             allPlutusTrue = case evalScripts tx collected of
               Fails _ -> False
-              Passes -> True
+              Passes _ -> True
          in counterexample
               ( mconcat
                   [ "\nHas plutus scripts: ",

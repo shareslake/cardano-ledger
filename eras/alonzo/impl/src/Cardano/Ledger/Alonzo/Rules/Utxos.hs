@@ -16,6 +16,7 @@
 module Cardano.Ledger.Alonzo.Rules.Utxos
   ( UTXOS,
     UtxosPredicateFailure (..),
+    UtxosEvent (..),
     constructValidated,
     lbl2Phase,
     TagMismatchDescription (..),
@@ -23,7 +24,6 @@ module Cardano.Ledger.Alonzo.Rules.Utxos
     validEnd,
     invalidBegin,
     invalidEnd,
-    UtxosEvent (..),
     (?!##),
     ConcreteAlonzo,
   )
@@ -45,7 +45,7 @@ import Cardano.Ledger.Alonzo.Tx
     ValidatedTx (..),
   )
 import qualified Cardano.Ledger.Alonzo.TxBody as Alonzo
-import Cardano.Ledger.Alonzo.TxInfo (FailureDescription (..), HasTxInfo (..), ScriptResult (..))
+import Cardano.Ledger.Alonzo.TxInfo (FailureDescription (..), HasTxInfo (..), PlutusDebug, ScriptResult (..))
 import qualified Cardano.Ledger.Alonzo.TxWitness as Alonzo
 import Cardano.Ledger.BaseTypes
   ( Globals,
@@ -123,8 +123,9 @@ instance
   type Event (UTXOS era) = UtxosEvent era
   transitionRules = [utxosTransition]
 
-newtype UtxosEvent era
-  = UpdateEvent (Event (Core.EraRule "PPUP" era))
+data UtxosEvent era
+  = AlonzoPpupToUtxosEvent (Event (Core.EraRule "PPUP" era))
+  | PlutusScriptEvent [PlutusDebug]
 
 instance
   ( Era era,
@@ -135,7 +136,7 @@ instance
   Embed (PPUP era) (UTXOS era)
   where
   wrapFailed = UpdateFailure
-  wrapEvent = UpdateEvent
+  wrapEvent = AlonzoPpupToUtxosEvent
 
 utxosTransition ::
   forall era.
@@ -190,7 +191,7 @@ scriptsValidateTransition = do
             ?!## ValidationTagMismatch
               (getField @"isValid" tx)
               (FailedUnexpectedly sss)
-        Passes -> pure ()
+        (Passes ps) -> tellEvent (PlutusScriptEvent ps)
     Left info -> failBecause (CollectErrors info)
 
   let !_ = traceEvent validEnd ()
@@ -221,7 +222,7 @@ scriptsNotValidateTransition = do
   case collectTwoPhaseScriptInputs ei sysSt pp tx utxo of
     Right sLst ->
       case evalScripts @era tx sLst of
-        Passes -> False ?!## ValidationTagMismatch (getField @"isValid" tx) PassedUnexpectedly
+        (Passes _) -> False ?!## ValidationTagMismatch (getField @"isValid" tx) PassedUnexpectedly
         Fails _sss -> pure ()
     Left info -> failBecause (CollectErrors info)
 
@@ -373,7 +374,7 @@ constructValidated globals (UtxoEnv _ pp _ _) st tx =
     utxo = _utxo st
     sysS = systemStart globals
     ei = epochInfo globals
-    lift Passes = True -- Convert a ScriptResult into a Bool
+    lift (Passes _) = True -- Convert a ScriptResult into a Bool
     lift (Fails _) = False
 
 --------------------------------------------------------------------------------

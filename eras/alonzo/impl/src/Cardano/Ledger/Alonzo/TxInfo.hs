@@ -444,28 +444,28 @@ instance FromCBOR FailureDescription where
       dec 1 = SumD PlutusFailure <! From <! From
       dec n = Invalid n
 
-data ScriptResult = Passes | Fails ![FailureDescription]
+data ScriptResult = Passes ![PlutusDebug] | Fails ![FailureDescription]
   deriving (Show, Generic, NoThunks)
 
 instance ToCBOR ScriptResult where
-  toCBOR Passes = encode $ Sum Passes 0
+  toCBOR (Passes ps) = encode $ Sum Passes 0 !> To ps
   toCBOR (Fails fs) = encode $ Sum Fails 1 !> To fs
 
 instance FromCBOR ScriptResult where
   fromCBOR = decode (Summands "ScriptResult" dec)
     where
-      dec 0 = SumD Passes
+      dec 0 = SumD Passes <! From
       dec 1 = SumD Fails <! From
       dec n = Invalid n
 
-andResult :: ScriptResult -> ScriptResult -> ScriptResult
-andResult Passes Passes = Passes
-andResult Passes ans = ans
-andResult ans Passes = ans
-andResult (Fails xs) (Fails ys) = Fails (xs ++ ys)
-
+-- | The ScriptResult operation is biased towards failure.
+--  Successes are combined with successes, failures are combined
+--  with failures, but a failure always overrides successes.
 instance Semigroup ScriptResult where
-  (<>) = andResult
+  (Passes xs) <> (Passes ys) = Passes (xs <> ys)
+  (Passes _) <> fs@(Fails _) = fs
+  fs@(Fails _) <> (Passes _) = fs
+  (Fails xs) <> (Fails ys) = Fails (xs <> ys)
 
 data PlutusDebug = PlutusDebug
   { debugCostModel :: CostModel,
@@ -474,7 +474,7 @@ data PlutusDebug = PlutusDebug
     debugData :: [PV1.Data],
     debugVersion :: Language
   }
-  deriving (Show)
+  deriving (Show, Generic, NoThunks)
 
 data PlutusDebugInfo
   = DebugSuccess PV1.ExBudget
@@ -533,7 +533,7 @@ runPLCScript ::
   ExUnits ->
   [PV1.Data] ->
   ScriptResult
-runPLCScript proxy lang (CostModel cost) scriptbytestring units ds =
+runPLCScript proxy lang cm@(CostModel cost) scriptbytestring units ds =
   case plutusInterpreter
     lang
     PV1.Quiet
@@ -542,7 +542,7 @@ runPLCScript proxy lang (CostModel cost) scriptbytestring units ds =
     scriptbytestring
     ds of
     (_, Left e) -> explainPlutusFailure proxy lang scriptbytestring e ds (CostModel cost) units
-    (_, Right _) -> Passes
+    (_, Right _) -> Passes [PlutusDebug cm units scriptbytestring ds lang]
   where
     plutusInterpreter PlutusV1 = PV1.evaluateScriptRestricting
     plutusInterpreter PlutusV2 = PV2.evaluateScriptRestricting

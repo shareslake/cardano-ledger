@@ -18,7 +18,7 @@ import Cardano.Ledger.Alonzo.PlutusScriptApi
   )
 import Cardano.Ledger.Alonzo.Rules.Utxos
   ( TagMismatchDescription (..),
-    UtxosEvent (UpdateEvent),
+    UtxosEvent (..),
     UtxosPredicateFailure (..),
     invalidBegin,
     invalidEnd,
@@ -102,7 +102,7 @@ instance
   Embed (PPUP era) (BabbageUTXOS era)
   where
   wrapFailed = UpdateFailure
-  wrapEvent = UpdateEvent
+  wrapEvent = AlonzoPpupToUtxosEvent
 
 utxosTransition ::
   forall era.
@@ -162,7 +162,7 @@ scriptsYes = do
             ?!## ValidationTagMismatch
               (getField @"isValid" tx)
               (FailedUnexpectedly sss)
-        Passes -> pure ()
+        (Passes ps) -> tellEvent (PlutusScriptEvent ps)
     Left info -> failBecause (CollectErrors info)
 
   let !_ = traceEvent validEnd ()
@@ -196,7 +196,7 @@ scriptsNo = do
       {- sLst := collectTwoPhaseScriptInputs pp tx utxo -}
       {- isValid tx = evalScripts tx sLst = False -}
       case evalScripts @era tx sLst of
-        Passes -> False ?!## ValidationTagMismatch (getField @"isValid" tx) PassedUnexpectedly
+        (Passes _) -> False ?!## ValidationTagMismatch (getField @"isValid" tx) PassedUnexpectedly
         Fails _sss -> pure ()
     Left info -> failBecause (CollectErrors info)
 
