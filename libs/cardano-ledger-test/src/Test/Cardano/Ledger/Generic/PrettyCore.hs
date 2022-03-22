@@ -24,8 +24,6 @@ module Test.Cardano.Ledger.Generic.PrettyCore where
 -- import Cardano.Ledger.Alonzo.TxWitness(TxWitness (..))
 
 import Cardano.Ledger.Address (Addr (..))
-import Cardano.Ledger.Allegra (AllegraEra)
-import Cardano.Ledger.Alonzo (AlonzoEra)
 import Cardano.Ledger.Alonzo.Data (Data (..), binaryDataToData)
 import Cardano.Ledger.Alonzo.PlutusScriptApi (CollectError (..))
 import Cardano.Ledger.Alonzo.Rules.Bbody (AlonzoBbodyPredFail (..))
@@ -37,7 +35,6 @@ import Cardano.Ledger.Alonzo.Tx (IsValid (..), ScriptPurpose (..))
 import qualified Cardano.Ledger.Alonzo.TxBody as Alonzo (TxOut (..))
 import Cardano.Ledger.Alonzo.TxInfo (FailureDescription (..))
 import Cardano.Ledger.Alonzo.TxWitness (Redeemers (..), unTxDats)
-import Cardano.Ledger.Babbage (BabbageEra)
 import qualified Cardano.Ledger.Babbage.TxBody as Babbage
 import Cardano.Ledger.BaseTypes (BlocksMade (..), Network (..), txIxToInt)
 import qualified Cardano.Ledger.Core as Core
@@ -45,15 +42,13 @@ import Cardano.Ledger.Credential (Credential (..), PaymentCredential, StakeRefer
 import qualified Cardano.Ledger.Crypto as CC (Crypto)
 import Cardano.Ledger.Era (Era (..), hashScript)
 import Cardano.Ledger.Hashes (DataHash, ScriptHash (..))
-import Cardano.Ledger.Keys (HasKeyRole (coerceKeyRole), KeyHash (..), KeyPair (..), VKey (..), hashKey)
-import Cardano.Ledger.Mary (MaryEra)
+import Cardano.Ledger.Keys (GenDelegs (..), HasKeyRole (coerceKeyRole), KeyHash (..), KeyPair (..), VKey (..), hashKey)
 import Cardano.Ledger.Mary.Value (Value (..))
 import Cardano.Ledger.Pretty
 import Cardano.Ledger.Pretty.Alonzo
 import qualified Cardano.Ledger.Pretty.Babbage as Babbage
 import Cardano.Ledger.Pretty.Mary
-import Cardano.Ledger.Shelley (ShelleyEra)
-import Cardano.Ledger.Shelley.LedgerState (WitHashes (..))
+import Cardano.Ledger.Shelley.LedgerState (DPState (..), DState (..), InstantaneousRewards (..), PState (..), WitHashes (..))
 import Cardano.Ledger.Shelley.Rules.Bbody (BbodyPredicateFailure (..), BbodyState (..))
 import Cardano.Ledger.Shelley.Rules.Ledger (LedgerPredicateFailure (..))
 import Cardano.Ledger.Shelley.Rules.Ledgers (LedgersPredicateFailure (..))
@@ -67,6 +62,7 @@ import Cardano.Ledger.Shelley.UTxO (UTxO (..))
 import qualified Cardano.Ledger.ShelleyMA.Rules.Utxo as Mary (UtxoPredicateFailure (..))
 import Cardano.Ledger.ShelleyMA.Timelocks (Timelock (..))
 import Cardano.Ledger.TxIn (TxId (..), TxIn (..))
+import Cardano.Ledger.UnifiedMap (UnifiedMap)
 import qualified Cardano.Ledger.Val as Val
 import Control.State.Transition.Extended (STS (..))
 import qualified Data.Compact.SplitMap as Split
@@ -75,8 +71,9 @@ import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Data.Typeable (Typeable)
+import qualified Data.UMap as UMap (View (..), size)
 import PlutusCore.Data (Data (..))
-import Prettyprinter (viaShow)
+import Prettyprinter (viaShow, vsep)
 import Test.Cardano.Ledger.Generic.Fields
   ( TxBodyField (..),
     TxField (..),
@@ -138,11 +135,14 @@ instance CC.Crypto c => PrettyCore (BabbageEra c) where
   prettyTxOut = Babbage.ppTxOut
 
 prettyUTxO :: Proof era -> UTxO era -> PDoc
-prettyUTxO (Babbage _) (UTxO mp) = ppMap ppTxIn prettyTxOut (Split.toMap mp)
-prettyUTxO (Alonzo _) (UTxO mp) = ppMap ppTxIn prettyTxOut (Split.toMap mp)
-prettyUTxO (Mary _) (UTxO mp) = ppMap ppTxIn prettyTxOut (Split.toMap mp)
-prettyUTxO (Allegra _) (UTxO mp) = ppMap ppTxIn prettyTxOut (Split.toMap mp)
-prettyUTxO (Shelley _) (UTxO mp) = ppMap ppTxIn prettyTxOut (Split.toMap mp)
+prettyUTxO proof (UTxO mp) = prettyUTxOMap proof (Split.toMap mp)
+
+prettyUTxOMap :: Proof era -> Map.Map (TxIn (Crypto era)) (Core.TxOut era) -> PDoc
+prettyUTxOMap (Babbage _) mp = ppMap ppTxIn prettyTxOut mp
+prettyUTxOMap (Alonzo _) mp = ppMap ppTxIn prettyTxOut mp
+prettyUTxOMap (Mary _) mp = ppMap ppTxIn prettyTxOut mp
+prettyUTxOMap (Allegra _) mp = ppMap ppTxIn prettyTxOut mp
+prettyUTxOMap (Shelley _) mp = ppMap ppTxIn prettyTxOut mp
 
 -- ===================================================================
 -- PrettyA instances for UTXOW, UTXO, UTXOS, PPUP predicate failures
@@ -876,3 +876,44 @@ plutusSummary (Babbage _) (TimelockScript x) = timelockSummary x
 plutusSummary (Alonzo _) s@(PlutusScript lang _) = (ppString (show lang ++ " ")) <> scriptHashSummary (hashScript @era s)
 plutusSummary (Alonzo _) (TimelockScript x) = timelockSummary x
 plutusSummary other _ = ppString ("Plutus script in era " ++ show other ++ "???")
+
+dStateSummary :: DState crypto -> PDoc
+dStateSummary (DState umap future (GenDelegs current) irwd) =
+  ppRecord
+    "DState"
+    [ ("Unified Reward Map", uMapSummary umap),
+      ("Future genesis key delegations", ppInt (Map.size future)),
+      ("Genesis key delegations", ppInt (Map.size current)),
+      ("Instantaneous Rewards", instantSummary irwd)
+    ]
+
+instantSummary :: InstantaneousRewards crypto -> PDoc
+instantSummary (InstantaneousRewards reserves treasury dreserves dtreasury) =
+  ppRecord
+    "InstantaneousRewards"
+    [ ("Rewards from reserves", ppInt (Map.size reserves)),
+      ("Rewards from treasury", ppInt (Map.size treasury)),
+      ("Treasury to reserves", ppDeltaCoin dreserves),
+      ("Reserves to treasury", ppDeltaCoin dtreasury)
+    ]
+
+uMapSummary :: UnifiedMap crypto -> PDoc
+uMapSummary umap =
+  ppRecord
+    "UMap"
+    [ ("Reward Map", ppInt (UMap.size (UMap.Rewards umap))),
+      ("Delegations Map", ppInt (UMap.size (UMap.Delegations umap))),
+      ("Ptrs Map", ppInt (UMap.size (UMap.Ptrs umap)))
+    ]
+
+pStateSummary :: PState crypto -> PDoc
+pStateSummary (PState pp fpp retire) =
+  ppRecord
+    "PState"
+    [ ("Pool parameters", ppInt (Map.size pp)),
+      ("Future pool parameters", ppInt (Map.size fpp)),
+      ("Retiring stake pools", ppInt (Map.size retire))
+    ]
+
+dpStateSummary :: DPState crypto -> PDoc
+dpStateSummary (DPState d p) = vsep [dStateSummary d, pStateSummary p]
