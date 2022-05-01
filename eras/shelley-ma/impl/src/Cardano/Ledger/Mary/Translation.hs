@@ -67,7 +67,8 @@ instance Crypto c => TranslateEra (MaryEra c) NewEpochState where
           nesBcur = nesBcur nes,
           nesEs = translateEra' ctxt $ nesEs nes,
           nesRu = nesRu nes,
-          nesPd = nesPd nes
+          nesPd = nesPd nes,
+          stashedAVVMAddresses = ()
         }
 
 instance Crypto c => TranslateEra (MaryEra c) Tx where
@@ -122,8 +123,8 @@ instance Crypto c => TranslateEra (MaryEra c) LedgerState where
   translateEra ctxt ls =
     return
       LedgerState
-        { _utxoState = translateEra' ctxt $ _utxoState ls,
-          _delegationState = _delegationState ls
+        { lsUTxOState = translateEra' ctxt $ lsUTxOState ls,
+          lsDPState = lsDPState ls
         }
 
 instance Crypto c => TranslateEra (MaryEra c) ProposedPPUpdates where

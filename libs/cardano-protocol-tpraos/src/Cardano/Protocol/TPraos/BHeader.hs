@@ -12,9 +12,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
--- We are enabling orphans since BlockNo is orphaned until the instance is added to cardano-base
--- https://github.com/input-output-hk/cardano-base/pull/233
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Cardano.Protocol.TPraos.BHeader
   ( HashHeader (..),
@@ -25,6 +22,7 @@ module Cardano.Protocol.TPraos.BHeader
     lastAppliedHash,
     issuerIDfromBHBody,
     checkLeaderValue,
+    checkLeaderNatValue,
     bhHash,
     hashHeaderToNonce,
     prevHashToNonce,
@@ -103,7 +101,6 @@ import Cardano.Ledger.Slot (BlockNo (..), SlotNo (..))
 import Cardano.Protocol.TPraos.OCert (OCert (..))
 import Cardano.Slotting.Slot (WithOrigin (..))
 import Control.DeepSeq (NFData)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BS
 import qualified Data.ByteString.Builder.Extra as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -337,7 +334,7 @@ bhHash = HashHeader . Hash.castHash . Hash.hashWithSerialiser toCBOR
 hashHeaderToNonce :: HashHeader crypto -> Nonce
 hashHeaderToNonce (HashHeader h) = case Hash.hashFromBytes bytes of
   Nothing -> Nonce (Hash.castHash (Hash.hashWith id bytes))
-  Just hash -> Nonce hash
+  Just hash -> Nonce $! hash
   where
     bytes = Hash.hashToBytes h
 
@@ -358,12 +355,8 @@ prevHashToNonce = \case
 issuerIDfromBHBody :: CC.Crypto crypto => BHBody crypto -> KeyHash 'BlockIssuer crypto
 issuerIDfromBHBody = hashKey . bheaderVk
 
-bHeaderSize ::
-  forall crypto.
-  (CC.Crypto crypto) =>
-  BHeader crypto ->
-  Int
-bHeaderSize = BS.length . serialize'
+bHeaderSize :: forall crypto. BHeader crypto -> Int
+bHeaderSize = fromIntegral . BSL.length . bHeaderBytes
 
 bhbody ::
   CC.Crypto crypto =>
@@ -373,6 +366,18 @@ bhbody (BHeader b _) = b
 
 hBbsize :: BHBody crypto -> Natural
 hBbsize = bsize
+
+-- | Check that the certified VRF output, when used as a natural, is valid for
+-- being slot leader.
+checkLeaderValue ::
+  forall v.
+  (VRF.VRFAlgorithm v) =>
+  VRF.OutputVRF v ->
+  Rational ->
+  ActiveSlotCoeff ->
+  Bool
+checkLeaderValue certVRF σ f =
+  checkLeaderNatValue certVRF (VRF.getOutputVRFNatural certVRF) σ f
 
 -- | Check that the certified input natural is valid for being slot leader. This
 -- means we check that
@@ -397,14 +402,15 @@ hBbsize = bsize
 -- Note that  1       1               1                         certNatMax
 --           --- =  ----- = ---------------------------- = ----------------------
 --            q     1 - p    1 - (certNat / certNatMax)    (certNatMax - certNat)
-checkLeaderValue ::
-  forall v.
+checkLeaderNatValue ::
+  forall proxy v.
   (VRF.VRFAlgorithm v) =>
-  VRF.OutputVRF v ->
+  proxy v ->
+  Natural ->
   Rational ->
   ActiveSlotCoeff ->
   Bool
-checkLeaderValue certVRF σ f =
+checkLeaderNatValue prox certNat σ f =
   if activeSlotVal f == maxBound
     then -- If the active slot coefficient is equal to one,
     -- then nearly every stake pool can produce a block every slot.
@@ -419,13 +425,11 @@ checkLeaderValue certVRF σ f =
       MaxReached _ -> False
   where
     certNatMax :: Natural
-    certNatMax = (2 :: Natural) ^ (8 * VRF.sizeOutputVRF (Proxy @v))
+    certNatMax = (2 :: Natural) ^ (8 * VRF.sizeOutputVRF prox)
     c, recip_q, x :: FixedPoint
     c = activeSlotLog f
     recip_q = fromRational (toInteger certNatMax % toInteger (certNatMax - certNat))
     x = -fromRational σ * c
-    certNat :: Natural
-    certNat = VRF.getOutputVRFNatural certVRF
 
 seedEta :: Nonce
 seedEta = mkNonceFromNumber 0

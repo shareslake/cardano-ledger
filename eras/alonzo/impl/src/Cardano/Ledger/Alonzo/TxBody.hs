@@ -82,11 +82,15 @@ import Cardano.Ledger.Alonzo.Scripts (Script)
 import Cardano.Ledger.BaseTypes
   ( Network (..),
     StrictMaybe (..),
-    isSNothing,
     maybeToStrictMaybe,
   )
 import Cardano.Ledger.Coin (Coin (..))
-import Cardano.Ledger.CompactAddress (CompactAddr, compactAddr, decompactAddr)
+import Cardano.Ledger.CompactAddress
+  ( CompactAddr,
+    compactAddr,
+    decompactAddr,
+    fromCborBackwardsBothAddr,
+  )
 import Cardano.Ledger.Compactible
 import Cardano.Ledger.Core (PParamsDelta)
 import qualified Cardano.Ledger.Core as Core
@@ -627,25 +631,25 @@ instance
           txOut -> txOut
     internTxOut <$!> case lenOrIndef of
       Nothing -> do
-        a <- fromCBOR
+        (a, ca) <- fromCborBackwardsBothAddr
         cv <- decodeNonNegative
         decodeBreakOr >>= \case
-          True -> pure $ TxOutCompact a cv
+          True -> pure $ mkTxOutCompact a ca cv SNothing
           False -> do
             dh <- fromCBOR
             decodeBreakOr >>= \case
-              True -> pure $ TxOutCompactDH a cv dh
+              True -> pure $ mkTxOutCompact a ca cv (SJust dh)
               False -> cborError $ DecoderErrorCustom "txout" "Excess terms in txout"
-      Just 2 ->
-        TxOutCompact
-          <$> fromCBOR
-          <*> decodeNonNegative
-      Just 3 ->
-        TxOutCompactDH
-          <$> fromCBOR
-          <*> decodeNonNegative
-          <*> fromCBOR
+      Just 2 -> do
+        (a, ca) <- fromCborBackwardsBothAddr
+        cv <- decodeNonNegative
+        pure $ mkTxOutCompact a ca cv SNothing
+      Just 3 -> do
+        (a, ca) <- fromCborBackwardsBothAddr
+        cv <- decodeNonNegative
+        mkTxOutCompact a ca cv . SJust <$> fromCBOR
       Just _ -> cborError $ DecoderErrorCustom "txout" "wrong number of terms in txout"
+  {-# INLINEABLE fromSharedCBOR #-}
 
 pattern TxOutCompact ::
   ( Era era,
@@ -658,9 +662,7 @@ pattern TxOutCompact ::
 pattern TxOutCompact addr vl <-
   (viewCompactTxOut -> (addr, vl, SNothing))
   where
-    TxOutCompact cAddr cVal
-      | isAdaOnlyCompact cVal = TxOut (decompactAddr cAddr) (fromCompact cVal) SNothing
-      | otherwise = TxOutCompact' cAddr cVal
+    TxOutCompact cAddr cVal = mkTxOutCompact (decompactAddr cAddr) cAddr cVal SNothing
 
 pattern TxOutCompactDH ::
   forall era.
@@ -674,11 +676,22 @@ pattern TxOutCompactDH ::
 pattern TxOutCompactDH addr vl dh <-
   (viewCompactTxOut -> (addr, vl, SJust dh))
   where
-    TxOutCompactDH cAddr cVal dh
-      | isAdaOnlyCompact cVal = TxOut (decompactAddr cAddr) (fromCompact cVal) (SJust dh)
-      | otherwise = TxOutCompactDH' cAddr cVal dh
+    TxOutCompactDH cAddr cVal dh = mkTxOutCompact (decompactAddr cAddr) cAddr cVal (SJust dh)
 
 {-# COMPLETE TxOutCompact, TxOutCompactDH #-}
+
+mkTxOutCompact ::
+  forall era.
+  (Era era, HasCallStack) =>
+  Addr (Crypto era) ->
+  CompactAddr (Crypto era) ->
+  CompactForm (Core.Value era) ->
+  StrictMaybe (DataHash (Crypto era)) ->
+  TxOut era
+mkTxOutCompact addr cAddr cVal mdh
+  | isAdaOnlyCompact cVal = TxOut addr (fromCompact cVal) mdh
+  | SJust dh <- mdh = TxOutCompactDH' cAddr cVal dh
+  | otherwise = TxOutCompact' cAddr cVal
 
 encodeTxBodyRaw ::
   ( Era era,
@@ -720,13 +733,6 @@ encodeTxBodyRaw
       !> encodeKeyedStrictMaybe 11 _scriptIntegrityHash
       !> encodeKeyedStrictMaybe 7 _adHash
       !> encodeKeyedStrictMaybe 15 _txnetworkid
-    where
-      encodeKeyedStrictMaybe key x =
-        Omit isSNothing (Key key (E (toCBOR . fromSJust) x))
-
-      fromSJust :: StrictMaybe a -> a
-      fromSJust (SJust x) = x
-      fromSJust SNothing = error "SNothing in fromSJust. This should never happen, it is guarded by isSNothing"
 
 instance
   forall era.
@@ -781,24 +787,24 @@ instance
           (D (decodeStrictSeq fromCBOR))
       bodyFields 2 = field (\x tx -> tx {_txfee = x}) From
       bodyFields 3 =
-        field
+        ofield
           (\x tx -> tx {_vldt = (_vldt tx) {invalidHereafter = x}})
-          (D (SJust <$> fromCBOR))
+          From
       bodyFields 4 =
         field
           (\x tx -> tx {_certs = x})
           (D (decodeStrictSeq fromCBOR))
       bodyFields 5 = field (\x tx -> tx {_wdrls = x}) From
-      bodyFields 6 = field (\x tx -> tx {_update = x}) (D (SJust <$> fromCBOR))
-      bodyFields 7 = field (\x tx -> tx {_adHash = x}) (D (SJust <$> fromCBOR))
+      bodyFields 6 = ofield (\x tx -> tx {_update = x}) From
+      bodyFields 7 = ofield (\x tx -> tx {_adHash = x}) From
       bodyFields 8 =
-        field
+        ofield
           (\x tx -> tx {_vldt = (_vldt tx) {invalidBefore = x}})
-          (D (SJust <$> fromCBOR))
+          From
       bodyFields 9 = field (\x tx -> tx {_mint = x}) (D decodeMint)
-      bodyFields 11 = field (\x tx -> tx {_scriptIntegrityHash = x}) (D (SJust <$> fromCBOR))
+      bodyFields 11 = ofield (\x tx -> tx {_scriptIntegrityHash = x}) From
       bodyFields 14 = field (\x tx -> tx {_reqSignerHashes = x}) (D (decodeSet fromCBOR))
-      bodyFields 15 = field (\x tx -> tx {_txnetworkid = x}) (D (SJust <$> fromCBOR))
+      bodyFields 15 = ofield (\x tx -> tx {_txnetworkid = x}) From
       bodyFields n = field (\_ t -> t) (Invalid n)
       requiredFields =
         [ (0, "inputs"),

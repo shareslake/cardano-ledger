@@ -25,7 +25,15 @@ module Test.Cardano.Ledger.Shelley.Rules.Chain
 where
 
 import Cardano.Ledger.BHeaderView (BHeaderView)
-import Cardano.Ledger.BaseTypes (BlocksMade (..), Globals (..), Nonce (..), ProtVer (..), ShelleyBase, StrictMaybe (..), UnitInterval)
+import Cardano.Ledger.BaseTypes
+  ( BlocksMade (..),
+    Globals (..),
+    Nonce (..),
+    ProtVer (..),
+    ShelleyBase,
+    StrictMaybe (..),
+    UnitInterval,
+  )
 import Cardano.Ledger.Block (Block (..))
 import Cardano.Ledger.Chain
   ( ChainPredicateFailure (..),
@@ -62,12 +70,17 @@ import Cardano.Ledger.Shelley.LedgerState
     LedgerState (..),
     NewEpochState (..),
     PState (..),
-    TransUTxOState,
+    StashedAVVMAddresses,
     smartUTxOState,
     updateNES,
     _genDelegs,
   )
-import Cardano.Ledger.Shelley.Rules.Bbody (BBODY, BbodyEnv (..), BbodyPredicateFailure, BbodyState (..))
+import Cardano.Ledger.Shelley.Rules.Bbody
+  ( BBODY,
+    BbodyEnv (..),
+    BbodyPredicateFailure,
+    BbodyState (..),
+  )
 import Cardano.Ledger.Shelley.Rules.Tick (TICK, TickEvent, TickPredicateFailure)
 import Cardano.Ledger.Shelley.UTxO (UTxO (..))
 import Cardano.Ledger.Slot (EpochNo)
@@ -128,15 +141,11 @@ data ChainState era = ChainState
   }
   deriving (Generic)
 
-deriving stock instance
-  TransUTxOState Show era =>
-  Show (ChainState era)
+deriving stock instance Show (NewEpochState era) => Show (ChainState era)
 
-deriving stock instance
-  TransUTxOState Eq era =>
-  Eq (ChainState era)
+deriving stock instance Eq (NewEpochState era) => Eq (ChainState era)
 
-instance (Era era, TransUTxOState NFData era) => NFData (ChainState era)
+instance NFData (NewEpochState era) => NFData (ChainState era)
 
 data TestChainPredicateFailure era
   = RealChainPredicateFailure !ChainPredicateFailure
@@ -180,7 +189,8 @@ instance
 -- | Creates a valid initial chain state
 initialShelleyState ::
   ( Era era,
-    Default (State (Core.EraRule "PPUP" era))
+    Default (State (Core.EraRule "PPUP" era)),
+    Default (StashedAVVMAddresses era)
   ) =>
   WithOrigin (LastAppliedBlock (Crypto era)) ->
   EpochNo ->
@@ -214,6 +224,7 @@ initialShelleyState lab e utxo reserves genDelegs pp initNonce =
         )
         SNothing
         (PoolDistr Map.empty)
+        def
     )
     cs
     initNonce
@@ -314,7 +325,7 @@ chainTransition =
           Right () -> pure ()
           Left e -> failBecause $ PrtclSeqFailure e
 
-        let NewEpochState _ _ _ (EpochState _ _ _ _ pp _) _ _ = nes
+        let NewEpochState _ _ _ (EpochState _ _ _ _ pp _) _ _ _ = nes
             chainChecksData = pparamsToChainChecksPParams pp
             bhView = makeHeaderView bh
 
@@ -327,8 +338,8 @@ chainTransition =
 
         nes' <- trans @(Core.EraRule "TICK" era) $ TRC ((), nes, s)
 
-        let NewEpochState e1 _ _ _ _ _ = nes
-            NewEpochState e2 _ bcur es _ _pd = nes'
+        let NewEpochState e1 _ _ _ _ _ _ = nes
+            NewEpochState e2 _ bcur es _ _pd _ = nes'
         let EpochState account _ ls _ pp' _ = es
         let LedgerState _ (DPState (DState _ _ genDelegs _) (PState _ _ _)) = ls
         let ph = lastAppliedHash lab

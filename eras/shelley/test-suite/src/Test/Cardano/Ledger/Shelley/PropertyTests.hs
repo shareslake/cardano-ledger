@@ -3,7 +3,6 @@
 {-# LANGUAGE DoAndIfThenElse #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -22,8 +21,6 @@ module Test.Cardano.Ledger.Shelley.PropertyTests
     -- Crypto era only
     propCompactAddrRoundTrip,
     propCompactSerializationAgree,
-    propDecompactAddrLazy,
-    propDecompactShelleyLazyAddr,
   )
 where
 
@@ -34,7 +31,7 @@ import Cardano.Ledger.Era (Era (Crypto), TxSeq)
 import Cardano.Ledger.Hashes (EraIndependentTxBody)
 import Cardano.Ledger.Keys (DSignable, Hash, KeyRole (Witness))
 import Cardano.Ledger.SafeHash (SafeHash)
-import Cardano.Ledger.Shelley.API (DPState, PPUPState, UTxOState)
+import Cardano.Ledger.Shelley.API (LedgerState, PPUPState)
 import Cardano.Ledger.Shelley.Delegation.Certificates (DCert)
 import Cardano.Ledger.Shelley.PParams (Update (..))
 import Cardano.Ledger.Shelley.Rules.Ledger (LedgerEnv)
@@ -57,8 +54,9 @@ import Test.Cardano.Ledger.Shelley.Address.Bootstrap
 import Test.Cardano.Ledger.Shelley.Address.CompactAddr
   ( propCompactAddrRoundTrip,
     propCompactSerializationAgree,
-    propDecompactAddrLazy,
-    propDecompactShelleyLazyAddr,
+    propDecompactErrors,
+    propDeserializeRewardAcntErrors,
+    propValidateNewDecompact,
   )
 import Test.Cardano.Ledger.Shelley.ByronTranslation (testGroupByronTranslation)
 import Test.Cardano.Ledger.Shelley.Generator.Core (GenEnv)
@@ -129,8 +127,12 @@ minimalPropertyTests =
         "Compact Address Tests"
         [ TQC.testProperty "Compact address round trip" (propCompactAddrRoundTrip @(Crypto era)),
           TQC.testProperty "Compact address binary representation" (propCompactSerializationAgree @(Crypto era)),
-          TQC.testProperty "determining address type doesn't force contents" (propDecompactAddrLazy @(Crypto era)),
-          TQC.testProperty "reading the keyhash doesn't force the stake reference" (propDecompactShelleyLazyAddr @(Crypto era))
+          TQC.testProperty "Ensure Addr failures on incorrect binary data" $
+            propDecompactErrors @(Crypto era),
+          TQC.testProperty "Ensure RewardAcnt failures on incorrect binary data" $
+            propDeserializeRewardAcntErrors @(Crypto era),
+          TQC.testProperty "Decompacting an address is still valid" $
+            propValidateNewDecompact @(Crypto era)
         ],
       TQC.testProperty "WitVKey does not brake containers due to invalid Ord" $
         propWitVKeys @(Crypto era)
@@ -155,7 +157,7 @@ propertyTests ::
     HasField "scriptWits" (Core.Witnesses era) (Map (ScriptHash (Crypto era)) (Core.Script era)),
     QC.BaseEnv ledger ~ Globals,
     BaseM ledger ~ ReaderT Globals Identity,
-    State ledger ~ (UTxOState era, DPState (Crypto era)),
+    State ledger ~ LedgerState era,
     Signal ledger ~ Core.Tx era,
     Show (TxSeq era)
   ) =>
@@ -216,7 +218,7 @@ propertyTests =
         "Compact Address Tests"
         [ TQC.testProperty "Compact address round trip" (propCompactAddrRoundTrip @(Crypto era)),
           TQC.testProperty "Compact address binary representation" (propCompactSerializationAgree @(Crypto era)),
-          TQC.testProperty "determining address type doesn't force contents" (propDecompactAddrLazy @(Crypto era)),
-          TQC.testProperty "reading the keyhash doesn't force the stake reference" (propDecompactShelleyLazyAddr @(Crypto era))
+          TQC.testProperty "Ensure failures on incorrect binary data" $
+            propDecompactErrors @(Crypto era)
         ]
     ]

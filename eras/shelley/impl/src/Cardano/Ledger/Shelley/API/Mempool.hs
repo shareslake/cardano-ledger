@@ -1,6 +1,4 @@
-{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -41,8 +39,7 @@ import Cardano.Ledger.BaseTypes (Globals, ShelleyBase)
 import Cardano.Ledger.Core (AnnotatedData, ChainData, SerialisableData)
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Era
-  ( Crypto,
-    Era,
+  ( Era,
     PreviousEra,
     TranslateEra (translateEra),
     TranslationContext,
@@ -133,13 +130,6 @@ class
     MempoolState era ->
     Core.Tx era ->
     m (MempoolState era, Validated (Core.Tx era))
-  default applyTx ::
-    MonadError (ApplyTxError era) m =>
-    Globals ->
-    MempoolEnv era ->
-    MempoolState era ->
-    Core.Tx era ->
-    m (MempoolState era, Validated (Core.Tx era))
   applyTx globals env state tx =
     let res =
           flip runReader globals
@@ -168,13 +158,6 @@ class
     MempoolState era ->
     Validated (Core.Tx era) ->
     m (MempoolState era)
-  default reapplyTx ::
-    MonadError (ApplyTxError era) m =>
-    Globals ->
-    MempoolEnv era ->
-    MempoolState era ->
-    Validated (Core.Tx era) ->
-    m (MempoolState era)
   reapplyTx globals env state (Validated tx) =
     let res =
           flip runReader globals
@@ -188,10 +171,7 @@ instance ShelleyEraCrypto c => ApplyTx (ShelleyEra c)
 
 type MempoolEnv era = Ledger.LedgerEnv era
 
-type MempoolState era =
-  ( LedgerState.UTxOState era,
-    LedgerState.DPState (Crypto era)
-  )
+type MempoolState era = LedgerState.LedgerState era
 
 -- | Construct the environment used to validate transactions from the full
 -- ledger state.
@@ -228,13 +208,7 @@ mkMempoolEnv
 --   regenerated when the ledger state gets updated (e.g. through application of
 --   a new block).
 mkMempoolState :: NewEpochState era -> MempoolState era
-mkMempoolState LedgerState.NewEpochState {LedgerState.nesEs} =
-  (_utxoState, _delegationState)
-  where
-    LedgerState.LedgerState
-      { LedgerState._utxoState,
-        LedgerState._delegationState
-      } = LedgerState.esLState nesEs
+mkMempoolState LedgerState.NewEpochState {LedgerState.nesEs} = LedgerState.esLState nesEs
 
 newtype ApplyTxError era = ApplyTxError [PredicateFailure (Core.EraRule "LEDGER" era)]
 
@@ -264,8 +238,7 @@ instance
 
 -- | Old 'applyTxs'
 applyTxs ::
-  ApplyTx era =>
-  MonadError (ApplyTxError era) m =>
+  (ApplyTx era, MonadError (ApplyTxError era) m) =>
   Globals ->
   SlotNo ->
   Seq (Core.Tx era) ->
@@ -299,17 +272,16 @@ applyTxsTransition globals env txs state =
 -- | Transform a function over mempool states to one over the full
 -- 'NewEpochState'.
 overNewEpochState ::
-  Applicative f =>
+  Functor f =>
   (MempoolState era -> f (MempoolState era)) ->
   NewEpochState era ->
   f (NewEpochState era)
 overNewEpochState f st = do
   f (mkMempoolState st)
-    <&> \(us, ds) ->
+    <&> \ls ->
       st
         { LedgerState.nesEs =
             (LedgerState.nesEs st)
-              { LedgerState.esLState =
-                  LedgerState.LedgerState us ds
+              { LedgerState.esLState = ls
               }
         }

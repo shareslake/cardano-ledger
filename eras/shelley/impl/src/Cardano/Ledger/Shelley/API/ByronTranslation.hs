@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -17,10 +18,12 @@ import qualified Cardano.Chain.Common as Byron
 import qualified Cardano.Chain.UTxO as Byron
 import qualified Cardano.Crypto.Hash as Crypto
 import qualified Cardano.Crypto.Hashing as Hashing
+import Cardano.Ledger.Address (isBootstrapRedeemer)
 import Cardano.Ledger.BaseTypes (BlocksMade (..), TxIx (..))
 import Cardano.Ledger.Coin (CompactForm (CompactCoin))
 import Cardano.Ledger.CompactAddress (CompactAddr (UnsafeCompactAddr))
 import qualified Cardano.Ledger.Crypto as CC
+import Cardano.Ledger.Era (getTxOutBootstrapAddress)
 import Cardano.Ledger.SafeHash (unsafeMakeSafeHash)
 import Cardano.Ledger.Shelley (ShelleyEra)
 import Cardano.Ledger.Shelley.API.Types
@@ -32,7 +35,6 @@ import qualified Data.ByteString.Short as SBS
 import qualified Data.Compact.SplitMap as SplitMap
 import Data.Default.Class (def)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
 import GHC.Stack (HasCallStack)
 
 -- | We use the same hashing algorithm so we can unwrap and rewrap the bytes.
@@ -50,11 +52,11 @@ hashFromShortBytesE ::
   (Crypto.HashAlgorithm h, HasCallStack) =>
   SBS.ShortByteString ->
   Crypto.Hash h a
-hashFromShortBytesE sbs = fromMaybe (error msg) $ Crypto.hashFromBytesShort sbs
-  where
-    msg =
-      "hashFromBytesShort called with ShortByteString of the wrong length: "
-        <> show sbs
+hashFromShortBytesE sbs =
+  case Crypto.hashFromBytesShort sbs of
+    Just !h -> h
+    Nothing ->
+      error $ "hashFromBytesShort called with ShortByteString of the wrong length: " <> show sbs
 
 translateCompactTxOutByronToShelley :: Byron.CompactTxOut -> TxOut (ShelleyEra c)
 translateCompactTxOutByronToShelley (Byron.CompactTxOut compactAddr amount) =
@@ -99,7 +101,15 @@ translateToShelleyLedgerState genesisShelley epochNo cvs =
       nesBcur = BlocksMade Map.empty,
       nesEs = epochState,
       nesRu = SNothing,
-      nesPd = PoolDistr Map.empty
+      nesPd = PoolDistr Map.empty,
+      -- At this point, we compute the stashed AVVM addresses, while we are able
+      -- to do a linear scan of the UTxO, and stash them away for use at the
+      -- Shelley/Allegra boundary.
+      stashedAVVMAddresses =
+        let UTxO utxo = _utxo . lsUTxOState . esLState $ epochState
+            redeemers =
+              SplitMap.filter (maybe False isBootstrapRedeemer . getTxOutBootstrapAddress) utxo
+         in UTxO redeemers
     }
   where
     pparams :: PParams (ShelleyEra c)
@@ -142,7 +152,7 @@ translateToShelleyLedgerState genesisShelley epochNo cvs =
     ledgerState :: LedgerState (ShelleyEra c)
     ledgerState =
       LedgerState
-        { _utxoState =
+        { lsUTxOState =
             UTxOState
               { _utxo = utxoShelley,
                 _deposited = Coin 0,
@@ -150,9 +160,9 @@ translateToShelleyLedgerState genesisShelley epochNo cvs =
                 _ppups = def,
                 _stakeDistro = IStake mempty Map.empty
               },
-          _delegationState =
+          lsDPState =
             DPState
-              { _dstate = def {_genDelegs = genDelegs},
-                _pstate = def
+              { dpsDState = def {_genDelegs = genDelegs},
+                dpsPState = def
               }
         }

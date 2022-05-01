@@ -41,7 +41,7 @@ import Cardano.Ledger.Alonzo.Tx (ValidatedTx (..), alonzoInputHashes, minfee)
 import Cardano.Ledger.Alonzo.TxBody (TxBody, TxOut (TxOut), getAlonzoTxOutEitherAddr)
 import Cardano.Ledger.Alonzo.TxInfo (ExtendedUTxO (..), alonzoTxInfo, validScript)
 import qualified Cardano.Ledger.Alonzo.TxSeq as Alonzo (TxSeq (..), hashTxSeq)
-import Cardano.Ledger.Alonzo.TxWitness (TxWitness (..))
+import Cardano.Ledger.Alonzo.TxWitness (TxDats (TxDats'), TxWitness (..))
 import Cardano.Ledger.AuxiliaryData (AuxiliaryDataHash (..), ValidateAuxiliaryData (..))
 import Cardano.Ledger.BaseTypes (BlocksMade (..))
 import Cardano.Ledger.Coin
@@ -104,6 +104,11 @@ instance CC.Crypto c => EraModule.Era (AlonzoEra c) where
   type Crypto (AlonzoEra c) = c
   getTxOutEitherAddr = getAlonzoTxOutEitherAddr
 
+  getAllTxInputs txb = spending `Set.union` collateral
+    where
+      spending = getField @"inputs" txb
+      collateral = getField @"collateral" txb
+
 instance API.ShelleyEraCrypto c => API.ApplyTx (AlonzoEra c) where
   reapplyTx globals env state vtx =
     let res =
@@ -159,6 +164,7 @@ instance
       )
       SNothing
       (PoolDistr Map.empty)
+      ()
     where
       initialEpochNo = 0
       initialUtxo = genesisUTxO sg
@@ -229,9 +235,11 @@ instance CC.Crypto c => ExtendedUTxO (AlonzoEra c) where
   getAllowedSupplimentalDataHashes txbody _ =
     Set.fromList
       [ dh
-        | out <- toList (getField @"outputs" txbody),
+        | out <- allOuts txbody,
           SJust dh <- [getField @"datahash" out]
       ]
+  allOuts txbody = toList $ getField @"outputs" txbody
+  txdata (ValidatedTx _ (TxWitness _ _ _ (TxDats' m) _) _ _) = Set.fromList $ Map.elems m
 
 -------------------------------------------------------------------------------
 -- Era Mapping

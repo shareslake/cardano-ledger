@@ -617,7 +617,7 @@ createRUpdOld slotsPerEpoch b@(BlocksMade b') es@(EpochState acnt ss ls pr _ nm)
   asc <- asks activeSlotCoeff
   let SnapShot stake' delegs' poolParams = _pstakeGo ss
       Coin reserves = _reserves acnt
-      ds = _dstate $ _delegationState ls
+      ds = dpsDState $ lsDPState ls
       -- reserves and rewards change
       deltaR1 =
         rationalToCoinViaFloor $
@@ -782,7 +782,7 @@ eventsMirrorRewards events nes = same eventRew compRew
             (completed, lastevent) = complete pulser
     total = getMostRecentTotalRewardEvent events
     aggevent = aggIncrementalRewardEvents events
-    (aggFilteredEvent, _) = filterAllRewards aggevent (nesEs nes)
+    (aggFilteredEvent, _, _, _) = filterAllRewards aggevent (nesEs nes)
     same x y = withMaxSuccess 1 $ counterexample message (x === y)
       where
         message =

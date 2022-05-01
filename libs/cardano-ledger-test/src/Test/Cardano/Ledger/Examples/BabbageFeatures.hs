@@ -20,11 +20,10 @@ import Cardano.Ledger.Alonzo.Language (Language (..))
 import Cardano.Ledger.Alonzo.PlutusScriptApi (CollectError (..))
 import Cardano.Ledger.Alonzo.Rules.Utxos (UtxosPredicateFailure (..))
 import Cardano.Ledger.Alonzo.Rules.Utxow (UtxowPredicateFail (..))
-import Cardano.Ledger.Alonzo.Scripts (CostModels (..), ExUnits (..))
+import Cardano.Ledger.Alonzo.Scripts (CostModels (..), ExUnits (..), Script (PlutusScript))
 import qualified Cardano.Ledger.Alonzo.Scripts as Tag (Tag (..))
 import Cardano.Ledger.Alonzo.TxInfo (TranslationError (..))
 import Cardano.Ledger.Alonzo.TxWitness (RdmrPtr (..), Redeemers (..), TxDats (..))
-import Cardano.Ledger.Babbage (BabbageEra)
 import Cardano.Ledger.Babbage.Rules.Utxo (BabbageUtxoPred (..))
 import qualified Cardano.Ledger.Babbage.TxBody as Babbage
 import Cardano.Ledger.BaseTypes
@@ -38,6 +37,7 @@ import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Credential (Credential (..), StakeReference (..))
 import qualified Cardano.Ledger.Crypto as CC
 import Cardano.Ledger.Era (Era (..), ValidateScript (hashScript))
+import Cardano.Ledger.Hashes (ScriptHash)
 import Cardano.Ledger.Keys
   ( KeyPair (..),
     KeyRole (..),
@@ -47,11 +47,14 @@ import Cardano.Ledger.Pretty.Babbage ()
 import Cardano.Ledger.SafeHash (hashAnnotated)
 import Cardano.Ledger.Shelley.API (ProtVer (..), UTxO (..))
 import Cardano.Ledger.Shelley.LedgerState (UTxOState (..), smartUTxOState)
+import qualified Cardano.Ledger.Shelley.Rules.Utxow as Shelley
 import Cardano.Ledger.Shelley.TxBody (DCert (..), DelegCert (..))
 import Cardano.Ledger.Shelley.UTxO (makeWitnessVKey)
 import Cardano.Ledger.TxIn (TxIn (..), txid)
 import Cardano.Ledger.Val (inject)
 import Control.State.Transition.Extended hiding (Assertion)
+import qualified Data.ByteString as BS
+import Data.ByteString.Short (ShortByteString)
 import qualified Data.Compact.SplitMap as SplitMap
 import Data.Default.Class (Default (..))
 import qualified Data.Map as Map
@@ -65,7 +68,6 @@ import Test.Cardano.Ledger.Examples.TwoPhaseValidation
     freeCostModelV1,
     freeCostModelV2,
     keyBy,
-    scriptStakeCredSuceed,
     testUTXOW,
     trustMeP,
   )
@@ -78,7 +80,7 @@ import Test.Cardano.Ledger.Generic.Fields
   )
 import Test.Cardano.Ledger.Generic.PrettyCore ()
 import Test.Cardano.Ledger.Generic.Proof
-import Test.Cardano.Ledger.Generic.Scriptic (PostShelley, Scriptic (..))
+import Test.Cardano.Ledger.Generic.Scriptic (PostShelley (after), Scriptic (..), matchkey)
 import Test.Cardano.Ledger.Generic.Updaters
 import Test.Cardano.Ledger.Shelley.Generator.EraGen (genesisId)
 import Test.Cardano.Ledger.Shelley.Utils (RawSeed (..), mkKeyPair)
@@ -119,8 +121,14 @@ collateralOutput :: Scriptic era => Proof era -> Core.TxOut era
 collateralOutput pf =
   newTxOut pf [Address $ plainAddr pf, Amount (inject $ Coin 50)]
 
+-- We intentionally use a ByteString with length greater than 64 to serve as
+-- as reminder that our protection against contiguous data over 64 Bytes on
+-- the wire is done during deserialization using the Plutus library.
+sixtyFiveBytes :: BS.ByteString
+sixtyFiveBytes = BS.pack [1 .. 65]
+
 datumExample1 :: Data era
-datumExample1 = Data (Plutus.I 123)
+datumExample1 = Data (Plutus.B sixtyFiveBytes)
 
 inlineDatumOutput :: forall era. (Scriptic era) => Proof era -> Core.TxOut era
 inlineDatumOutput pf =
@@ -173,7 +181,7 @@ referenceScriptOutput2 pf =
     pf
     [ Address (plainAddr pf),
       Amount (inject $ Coin 5000),
-      RefScript (SJust $ always 2 pf)
+      RefScript (SJust $ alwaysAlt 2 pf)
     ]
 
 referenceDataHashOutput :: forall era. (Scriptic era) => Proof era -> Core.TxOut era
@@ -219,6 +227,9 @@ collateralInput11 = mkGenesisTxIn 11
 collateralInput17 :: (CH.HashAlgorithm (CC.HASH crypto), HasCallStack) => TxIn crypto
 collateralInput17 = mkGenesisTxIn 17
 
+referenceScriptInput3 :: (CH.HashAlgorithm (CC.HASH crypto), HasCallStack) => TxIn crypto
+referenceScriptInput3 = mkGenesisTxIn 18
+
 --
 -- Genesis UTxO
 --
@@ -236,7 +247,8 @@ initUTxO pf =
         (failsEUTxOInput, failsEUTxO pf),
         (inlineDatumInputV1, inlineDatumOutputV1 pf),
         (collateralInput11, collateralOutput pf),
-        (collateralInput17, collateralOutput pf)
+        (collateralInput17, collateralOutput pf),
+        (referenceScriptInput3, malformedScriptsTxOut pf)
       ]
 
 defaultPPs :: [PParamsField era]
@@ -529,7 +541,7 @@ redeemersEx7 =
   Redeemers $
     Map.singleton (RdmrPtr Tag.Cert 0) (redeemerExample1, ExUnits 5000 5000)
 
-refScriptForDelegCertTxBody :: Scriptic era => Proof era -> Core.TxBody era
+refScriptForDelegCertTxBody :: forall era. Scriptic era => Proof era -> Core.TxBody era
 refScriptForDelegCertTxBody pf =
   newTxBody
     pf
@@ -537,10 +549,12 @@ refScriptForDelegCertTxBody pf =
       RefInputs' [referenceScriptInput2],
       Collateral' [collateralInput11],
       Outputs' [outEx7 pf],
-      Certs' [DCertDeleg (DeRegKey $ scriptStakeCredSuceed pf)],
+      Certs' [DCertDeleg (DeRegKey cred)],
       Txfee (Coin 5),
-      WppHash (newScriptIntegrityHash pf (pp pf) [PlutusV1] redeemersEx7 mempty)
+      WppHash (newScriptIntegrityHash pf (pp pf) [PlutusV2] redeemersEx7 mempty)
     ]
+  where
+    cred = ScriptHashObj (hashScript @era $ alwaysAlt 2 pf)
 
 refScriptForDelegCertTx ::
   forall era.
@@ -584,7 +598,7 @@ collateralOutputTxBody pf =
     [ Inputs' [failsEUTxOInput],
       Collateral' [collateralInput17],
       CollateralReturn' [collateralReturn pf],
-      TotalCol (Coin 5),
+      TotalCol (SJust $ Coin 5),
       Outputs' [outEx1 pf],
       Txfee (Coin 5),
       WppHash (newScriptIntegrityHash pf (pp pf) [PlutusV1] validatingRedeemersEx1 txDatsExample2)
@@ -637,7 +651,7 @@ incorrectCollateralTotalTxBody pf =
     [ Inputs' [inlineDatumInput],
       Collateral' [collateralInput11],
       CollateralReturn' [collateralReturn pf],
-      TotalCol (Coin 6),
+      TotalCol (SJust $ Coin 6),
       Outputs' [outEx1 pf],
       Txfee (Coin 5),
       WppHash (newScriptIntegrityHash pf (pp pf) [PlutusV2] validatingRedeemersEx1 mempty)
@@ -734,6 +748,80 @@ class BabbageBased era failure where
 instance BabbageBased (BabbageEra c) (BabbageUtxoPred (BabbageEra c)) where
   fromUtxoB = id
 
+-- ====================================================================================
+--  Example 12: Invalid - Malformed plutus scripts
+-- ====================================================================================
+
+plutusScriptHash ::
+  forall era.
+  PostShelley era =>
+  Int ->
+  Proof era ->
+  ScriptHash (Crypto era)
+plutusScriptHash n pf = hashScript @era $ plutusScript n pf
+
+plutusScript :: PostShelley era => Int -> Proof era -> Core.Script era
+plutusScript s = allOf [matchkey 1, after (100 + s)]
+
+malformedScriptsTx ::
+  forall era.
+  ( Scriptic era,
+    GoodCrypto (Crypto era)
+  ) =>
+  Proof era ->
+  Core.Tx era
+malformedScriptsTx pf =
+  newTx
+    pf
+    [ Body txb,
+      WitnessesI
+        [ AddrWits' [makeWitnessVKey (hashAnnotated txb) (someKeys pf)]
+        ]
+    ]
+  where
+    txb = malformedScriptsTxBody pf
+
+malformedScriptsTxBody ::
+  forall era.
+  (Scriptic era) =>
+  Proof era ->
+  Core.TxBody era
+malformedScriptsTxBody pf =
+  newTxBody
+    pf
+    [ Outputs' [malformedScriptsTxOut pf],
+      WppHash (newScriptIntegrityHash pf (pp pf) [PlutusV2] (Redeemers mempty) mempty),
+      Inputs' [referenceScriptInput3]
+    ]
+
+malformedScriptsTxOut ::
+  Era era =>
+  Proof era ->
+  Core.TxOut era
+malformedScriptsTxOut pf =
+  newTxOut
+    pf
+    [ Address (plainAddr pf),
+      Amount (inject $ Coin 5000),
+      RefScript' [malformedScript pf "rs"]
+    ]
+
+malformedScript :: forall era. Proof era -> ShortByteString -> Core.Script era
+malformedScript pf s = case pf of
+  Babbage {} -> ms
+  Alonzo {} -> ms
+  x@Shelley {} -> er x
+  x@Mary {} -> er x
+  x@Allegra {} -> er x
+  where
+    ms :: Script era
+    ms = PlutusScript PlutusV2 $ "nonsense " <> s
+    er x = error $ "no malformedScript for " <> show x
+
+-- ====================================================================================
+--
+-- ====================================================================================
+
 testU ::
   forall era.
   ( GoodCrypto (Crypto era),
@@ -745,13 +833,6 @@ testU ::
   Either [(PredicateFailure (Core.EraRule "UTXOW" era))] (State (Core.EraRule "UTXOW" era)) ->
   Assertion
 testU pf tx expect = testUTXOW (UTXOW pf) (initUTxO pf) (pp pf) tx expect
-
-{- TODO
-
-INVALID examples:
-  * a tx with a script/datum which is not well-formed
-  * a tx with a plutus script and and byron outputs
--}
 
 genericBabbageFeatures ::
   forall era.
@@ -784,11 +865,6 @@ genericBabbageFeatures pf =
               pf
               (trustMeP pf True $ inlineDatumAndRefScriptTx pf)
               (Right $ utxoStEx3 pf),
-          testCase "inline datum and ref script and redundant script witness" $
-            testU
-              pf
-              (trustMeP pf True $ inlineDatumAndRefScriptAndWitScriptTx pf)
-              (Right $ utxoStEx4 pf),
           testCase "reference input with data hash, no data witness" $
             testU
               pf
@@ -817,6 +893,22 @@ genericBabbageFeatures pf =
               pf
               (trustMeP pf True $ incorrectCollateralTotalTx pf)
               (Left [fromUtxoB @era (UnequalCollateralReturn (Coin 5) (Coin 6))]),
+          testCase "malformed scripts" $
+            testU
+              pf
+              (trustMeP pf True $ malformedScriptsTx pf)
+              (Left [fromUtxoB @era (MalformedScripts (Set.fromList [hashScript @era $ malformedScript pf "rs"]))]),
+          testCase "inline datum and ref script and redundant script witness" $
+            testU
+              pf
+              (trustMeP pf True $ inlineDatumAndRefScriptAndWitScriptTx pf)
+              ( Left
+                  [ fromUtxow @era
+                      ( Shelley.ExtraneousScriptWitnessesUTXOW
+                          (Set.singleton $ hashScript @era (alwaysAlt 3 pf))
+                      )
+                  ]
+              ),
           testCase "inline datum with redundant datum witness" $
             testU
               pf

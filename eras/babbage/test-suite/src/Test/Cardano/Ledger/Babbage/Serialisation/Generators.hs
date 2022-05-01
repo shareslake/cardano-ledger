@@ -26,7 +26,7 @@ import Cardano.Ledger.Alonzo.Scripts
     Script (..),
     Tag (..),
   )
-import Cardano.Ledger.Alonzo.TxInfo (FailureDescription (..), ScriptResult (..))
+import Cardano.Ledger.Alonzo.TxInfo (ScriptResult (..))
 import Cardano.Ledger.Alonzo.TxWitness
 import Cardano.Ledger.Babbage (BabbageEra)
 import Cardano.Ledger.Babbage.PParams
@@ -238,5 +238,6 @@ instance Mock c => Arbitrary (BabbageUtxoPred (BabbageEra c)) where
       [ FromAlonzoUtxoFail <$> arbitrary,
         FromAlonzoUtxowFail <$> arbitrary,
         UnequalCollateralReturn <$> arbitrary <*> arbitrary,
-        DanglingWitnessDataHash <$> arbitrary
+        DanglingWitnessDataHash <$> arbitrary,
+        MalformedScripts <$> arbitrary
       ]

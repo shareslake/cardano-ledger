@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
@@ -177,6 +178,9 @@ deserialiseRewardAcnt bs = case B.runGetOrFail getRewardAcnt (BSL.fromStrict bs)
       else Nothing
 
 -- | An address for UTxO.
+--
+-- Contents of Addr data type are intentionally left as lazy, otherwise
+-- operating on compact form of an address will result in redundant work.
 data Addr crypto
   = Addr Network (PaymentCredential crypto) (StakeReference crypto)
   | AddrBootstrap (BootstrapAddress crypto)
@@ -311,7 +315,7 @@ putRewardAcnt (RewardAcnt network cred) = do
         ScriptHashObj _ -> flip setBit payCredIsScript
         KeyHashObj _ -> id
       netId = networkToWord8 network
-      rewardAcntPrefix = 0xE0 -- 0b1110000 are always set for reward accounts
+      rewardAcntPrefix = 0xE0 -- 0b11100000 are always set for reward accounts
       header = setPayCredBit (netId .|. rewardAcntPrefix)
   B.putWord8 header
   putCredential cred
@@ -319,7 +323,7 @@ putRewardAcnt (RewardAcnt network cred) = do
 getRewardAcnt :: CC.Crypto crypto => Get (RewardAcnt crypto)
 getRewardAcnt = do
   header <- B.getWord8
-  let rewardAcntPrefix = 0xE0 -- 0b1110000 are always set for reward accounts
+  let rewardAcntPrefix = 0xE0 -- 0b11100000 are always set for reward accounts
       isRewardAcnt = (header .&. rewardAcntPrefix) == rewardAcntPrefix
       netId = header .&. 0x0F -- 0b00001111 is the mask for the network id
   case (word8ToNetwork netId, isRewardAcnt) of
@@ -341,7 +345,7 @@ getHash = do
   bytes <- B.getByteString . fromIntegral $ Hash.sizeHash ([] @h)
   case Hash.hashFromBytes bytes of
     Nothing -> fail "getHash: implausible hash length mismatch"
-    Just h -> pure h
+    Just !h -> pure h
 
 putHash :: Hash.Hash h a -> Put
 putHash = B.putByteString . Hash.hashToBytes
@@ -489,7 +493,7 @@ bootstrapKeyHash ::
 bootstrapKeyHash (BootstrapAddress byronAddress) =
   let root = Byron.addrRoot byronAddress
       bytes = Byron.abstractHashToBytes root
-      hash =
+      !hash =
         fromMaybe (panic "bootstrapKeyHash: incorrect hash length") $
           Hash.hashFromBytes bytes
    in KeyHash hash

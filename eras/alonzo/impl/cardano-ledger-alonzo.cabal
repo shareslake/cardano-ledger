@@ -57,7 +57,7 @@ library
     Cardano.Ledger.Alonzo.TxWitness
     Cardano.Ledger.DescribeEras
   build-depends:
-    aeson,
+    aeson >= 2,
     array,
     base-deriving-via,
     base64-bytestring,
@@ -76,9 +76,9 @@ library
     measures,
     mtl,
     nothunks,
-    plutus-ledger-api,
-    plutus-tx,
-    plutus-core,
+    plutus-ledger-api ^>= 1.0,
+    plutus-tx ^>= 1.0,
+    plutus-core ^>= 1.0, 
     prettyprinter,
     serialise,
     set-algebra,

@@ -73,9 +73,9 @@ alonzoSpecificProps SourceSignalTarget {source = chainSt, signal = block} =
     alonzoSpecificPropsLEDGER :: SourceSignalTarget (AlonzoLEDGER A) -> Property
     alonzoSpecificPropsLEDGER
       SourceSignalTarget
-        { source = (UTxOState {_utxo = UTxO u, _deposited = dp, _fees = f}, ds),
+        { source = LedgerState UTxOState {_utxo = UTxO u, _deposited = dp, _fees = f} ds,
           signal = tx,
-          target = (UTxOState {_utxo = UTxO u', _deposited = dp', _fees = f'}, ds')
+          target = LedgerState UTxOState {_utxo = UTxO u', _deposited = dp', _fees = f'} ds'
         } =
         let isValid' = getField @"isValid" tx
             noNewUTxO = u' `SplitMap.isSubmapOf` u
@@ -96,12 +96,12 @@ alonzoSpecificProps SourceSignalTarget {source = chainSt, signal = block} =
                 (UTxO u) of
                 Left e -> error $ "Plutus script collection error: " <> show e
                 Right c -> c
-            collectedScripts = Set.fromList $ map (\(s, _, _, _) -> s) collected
+            collectedScripts = Set.fromList $ map (\(s, v, _, _, _) -> PlutusScript v s) collected
             suppliedPScrpts = Set.fromList [PlutusScript v s | PlutusScript v s <- Map.elems allScripts]
             expectedPScripts = collectedScripts == suppliedPScrpts
             allPlutusTrue = case evalScripts (_protocolVersion pp) tx collected of
-              Fails _ -> False
-              Passes -> True
+              Fails _ _ -> False
+              Passes _ -> True
          in counterexample
               ( mconcat
                   [ "\nHas plutus scripts: ",

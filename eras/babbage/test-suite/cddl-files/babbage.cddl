@@ -321,9 +321,10 @@ ex_unit_prices =
 language = 0 ; Plutus v1
          / 1 ; Plutus v2
 
-costmdls = { * language => cost_model }
-
-cost_model = [ 166*166 int ]
+costmdls =
+  { ? 0 : [ 166*166 int ] ; Plutus v1
+  , ? 1 : [ 170*170 int ] ; Plutus v2
+  }
 
 transaction_metadatum =
     { * transaction_metadatum => transaction_metadatum }
@@ -404,7 +405,7 @@ pool_metadata_hash    = $hash32
 datum_hash = $hash32
 data = #6.24(bytes .cbor plutus_data)
 
-datum = [ 0 // 1, $hash32 // 2, data ]
+datum = [ 0, $hash32 // 1, data ]
 
 script_ref = #6.24(bytes .cbor script)
 

@@ -26,10 +26,13 @@ module Cardano.Ledger.Alonzo.Rules.Utxos
     UtxosEvent (..),
     (?!##),
     ConcreteAlonzo,
+    FailureDescription (..),
+    scriptFailuresToPredicateFailure,
+    scriptFailuresToPlutusDebug,
   )
 where
 
-import Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import Cardano.Binary (FromCBOR (..), ToCBOR (..), serialize')
 import qualified Cardano.Ledger.Alonzo.PParams as Alonzo
 import Cardano.Ledger.Alonzo.PlutusScriptApi
   ( CollectError,
@@ -43,7 +46,7 @@ import Cardano.Ledger.Alonzo.Tx
     ValidatedTx (..),
   )
 import qualified Cardano.Ledger.Alonzo.TxBody as Alonzo
-import Cardano.Ledger.Alonzo.TxInfo (ExtendedUTxO (..), FailureDescription (..), ScriptResult (..))
+import Cardano.Ledger.Alonzo.TxInfo (ExtendedUTxO (..), PlutusDebug, ScriptFailure (..), ScriptResult (..))
 import qualified Cardano.Ledger.Alonzo.TxWitness as Alonzo
 import Cardano.Ledger.BaseTypes
   ( Globals,
@@ -71,13 +74,17 @@ import Cardano.Ledger.Val as Val
 import Control.Monad.Except (MonadError (throwError))
 import Control.Monad.Trans.Reader (asks)
 import Control.State.Transition.Extended
+import Data.ByteString as BS (ByteString)
+import qualified Data.ByteString.Base64 as B64
 import Data.Coders
 import qualified Data.Compact.SplitMap as SplitMap
 import Data.Foldable (toList)
 import Data.List (intercalate)
+import Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.Map.Strict as Map
 import Data.Sequence.Strict (StrictSeq)
 import Data.Set (Set)
+import Data.Text (Text)
 import Debug.Trace (traceEvent)
 import GHC.Generics (Generic)
 import GHC.Records (HasField (..))
@@ -122,8 +129,10 @@ instance
   type Event (UTXOS era) = UtxosEvent era
   transitionRules = [utxosTransition]
 
-newtype UtxosEvent era
-  = UpdateEvent (Event (Core.EraRule "PPUP" era))
+data UtxosEvent era
+  = AlonzoPpupToUtxosEvent (Event (Core.EraRule "PPUP" era))
+  | SuccessfulPlutusScriptsEvent [PlutusDebug]
+  | FailedPlutusScriptsEvent (NonEmpty PlutusDebug)
 
 instance
   ( Era era,
@@ -134,7 +143,7 @@ instance
   Embed (PPUP era) (UTXOS era)
   where
   wrapFailed = UpdateFailure
-  wrapEvent = UpdateEvent
+  wrapEvent = AlonzoPpupToUtxosEvent
 
 utxosTransition ::
   forall era.
@@ -184,12 +193,12 @@ scriptsValidateTransition = do
   case collectTwoPhaseScriptInputs ei sysSt pp tx utxo of
     Right sLst ->
       case evalScripts @era (getField @"_protocolVersion" pp) tx sLst of
-        Fails sss ->
+        Fails _ps fs ->
           False
             ?!## ValidationTagMismatch
               (getField @"isValid" tx)
-              (FailedUnexpectedly sss)
-        Passes -> pure ()
+              (FailedUnexpectedly (scriptFailuresToPredicateFailure fs))
+        Passes ps -> tellEvent (SuccessfulPlutusScriptsEvent ps)
     Left info -> failBecause (CollectErrors info)
 
   () <- pure $! traceEvent validEnd ()
@@ -221,8 +230,10 @@ scriptsNotValidateTransition = do
     Right sLst ->
       whenFailureFree $
         case evalScripts @era (getField @"_protocolVersion" pp) tx sLst of
-          Passes -> False ?!## ValidationTagMismatch (getField @"isValid" tx) PassedUnexpectedly
-          Fails _sss -> pure ()
+          Passes _ps -> False ?!## ValidationTagMismatch (getField @"isValid" tx) PassedUnexpectedly
+          Fails ps fs -> do
+            tellEvent (SuccessfulPlutusScriptsEvent ps)
+            tellEvent (FailedPlutusScriptsEvent (scriptFailuresToPlutusDebug fs))
     Left info -> failBecause (CollectErrors info)
 
   let !_ = traceEvent invalidEnd ()
@@ -250,9 +261,37 @@ invalidEnd = intercalate "," ["[LEDGER][SCRIPTS_NOT_VALIDATE_TRANSITION]", "END"
 -- =============================================
 -- PredicateFailure data type for UTXOS
 
+data FailureDescription
+  = PlutusFailure Text BS.ByteString
+  deriving (Show, Eq, Generic, NoThunks)
+
+instance ToCBOR FailureDescription where
+  -- This strange encoding results from the fact that 'FailureDescription'
+  -- used to have another constructor, which used key 0.
+  -- We must maintain the original serialization in order to not disrupt
+  -- the node-to-client protocol of the cardano node.
+  toCBOR (PlutusFailure s b) = encode $ Sum PlutusFailure 1 !> To s !> To b
+
+instance FromCBOR FailureDescription where
+  fromCBOR = decode (Summands "FailureDescription" dec)
+    where
+      -- Note the lack of key 0. See the ToCBOR instance above for an explanation.
+      dec 1 = SumD PlutusFailure <! From <! From
+      dec n = Invalid n
+
+scriptFailureToFailureDescription :: ScriptFailure -> FailureDescription
+scriptFailureToFailureDescription (PlutusSF t pd) =
+  PlutusFailure t (B64.encode $ serialize' pd)
+
+scriptFailuresToPredicateFailure :: NonEmpty ScriptFailure -> NonEmpty FailureDescription
+scriptFailuresToPredicateFailure = fmap scriptFailureToFailureDescription
+
+scriptFailuresToPlutusDebug :: NonEmpty ScriptFailure -> NonEmpty PlutusDebug
+scriptFailuresToPlutusDebug = fmap (\(PlutusSF _ pdb) -> pdb)
+
 data TagMismatchDescription
   = PassedUnexpectedly
-  | FailedUnexpectedly [FailureDescription]
+  | FailedUnexpectedly (NonEmpty FailureDescription)
   deriving (Show, Eq, Generic, NoThunks)
 
 instance ToCBOR TagMismatchDescription where
@@ -307,13 +346,13 @@ instance
       dec n = Invalid n
 
 deriving stock instance
-  ( Shelley.TransUTxOState Show era,
+  ( Show (Shelley.UTxOState era),
     Show (PredicateFailure (Core.EraRule "PPUP" era))
   ) =>
   Show (UtxosPredicateFailure era)
 
 instance
-  ( Shelley.TransUTxOState Eq era,
+  ( Eq (Shelley.UTxOState era),
     Eq (PredicateFailure (Core.EraRule "PPUP" era))
   ) =>
   Eq (UtxosPredicateFailure era)
@@ -324,7 +363,7 @@ instance
   _ == _ = False
 
 instance
-  ( Shelley.TransUTxOState NoThunks era,
+  ( NoThunks (Shelley.UTxOState era),
     NoThunks (PredicateFailure (Core.EraRule "PPUP" era))
   ) =>
   NoThunks (UtxosPredicateFailure era)
@@ -374,8 +413,8 @@ constructValidated globals (UtxoEnv _ pp _ _) st tx =
     utxo = _utxo st
     sysS = systemStart globals
     ei = epochInfo globals
-    lift Passes = True -- Convert a ScriptResult into a Bool
-    lift (Fails _) = False
+    lift (Passes _) = True
+    lift (Fails _ _) = False
 
 --------------------------------------------------------------------------------
 -- 2-phase checks

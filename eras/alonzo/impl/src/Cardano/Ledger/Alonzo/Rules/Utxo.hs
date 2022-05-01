@@ -84,7 +84,7 @@ import Data.Coders
 import Data.Coerce (coerce)
 import qualified Data.Compact.SplitMap as SplitMap
 import Data.Either (isRight)
-import Data.Foldable (foldl', sequenceA_)
+import Data.Foldable (foldl', sequenceA_, toList)
 import Data.Ratio ((%))
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -206,16 +206,20 @@ deriving stock instance
   Show (UtxoPredicateFailure era)
 
 deriving stock instance
-  ( Eq (Core.Value era),
+  ( CC.Crypto (Crypto era),
+    Eq (Core.Value era),
     Eq (Core.TxOut era),
-    CC.Crypto (Crypto era),
     Eq (PredicateFailure (Core.EraRule "UTXOS" era))
   ) =>
   Eq (UtxoPredicateFailure era)
 
 instance
   ( Era era,
-    Shelley.TransUTxOState NoThunks era,
+    ToCBOR (Core.Value era),
+    ToCBOR (Core.TxOut era),
+    ToCBOR (Core.TxBody era),
+    NoThunks (Core.Value era),
+    NoThunks (Core.TxOut era),
     NoThunks (PredicateFailure (Core.EraRule "UTXOS" era))
   ) =>
   NoThunks (UtxoPredicateFailure era)
@@ -376,7 +380,7 @@ validateOutputTooSmallUTxO pp (UTxO outputs) =
         ( \out ->
             let v = getField @"value" out
              in -- pointwise is used because non-ada amounts must be >= 0 too
-                Val.pointwise (<) v (Val.inject $ Coin (utxoEntrySize out * coinsPerUTxOWord))
+                not $ Val.pointwise (>=) v (Val.inject $ Coin (utxoEntrySize out * coinsPerUTxOWord))
         )
         (SplitMap.elems outputs)
 
@@ -527,7 +531,7 @@ utxoTransition = do
   netId <- liftSTS $ asks networkId
 
   {- ∀(_ → (a, _)) ∈ txouts txb, netId a = NetworkId -}
-  runTestOnSignal $ Shelley.validateWrongNetwork netId txb
+  runTestOnSignal $ Shelley.validateWrongNetwork netId . toList $ getField @"outputs" txb
 
   {- ∀(a → ) ∈ txwdrls txb, netId a = NetworkId -}
   runTestOnSignal $ Shelley.validateWrongNetworkWithdrawal netId txb

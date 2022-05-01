@@ -144,6 +144,8 @@ ppBabbageUtxoPred (UnequalCollateralReturn c1 c2) =
     [("collateral needed", ppCoin c1), ("collateral returned", ppCoin c2)]
 ppBabbageUtxoPred (DanglingWitnessDataHash dhset) =
   ppSexp "DanglingWitnessDataHashes" [ppSet ppDataHash dhset]
+ppBabbageUtxoPred (MalformedScripts scripts) =
+  ppSexp "MalformedScripts" [ppSet ppScriptHash scripts]
 
 instance
   ( PrettyA (UtxoPredicateFailure era),
@@ -219,7 +221,7 @@ ppTxBody x =
       ("reference inputs", ppSet ppTxIn (referenceInputs' x)),
       ("outputs", ppStrictSeq ppTxOut (outputs' x)),
       ("collateral return", ppStrictMaybe ppTxOut (collateralReturn' x)),
-      ("total collateral", ppCoin (totalCollateral' x)),
+      ("total collateral", ppStrictMaybe ppCoin (totalCollateral' x)),
       ("certificates", ppStrictSeq ppDCert (certs' x)),
       ("withdrawals", ppWdrl (wdrls' x)),
       ("txfee", ppCoin (txfee' x)),

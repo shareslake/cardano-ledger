@@ -15,6 +15,7 @@ import Cardano.Binary
   ( DecoderError,
   )
 import Cardano.Ledger.Alonzo (AlonzoEra)
+import Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis)
 import qualified Cardano.Ledger.Alonzo.PParams as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import qualified Cardano.Ledger.Alonzo.TxBody as Alonzo (TxOut (..))
@@ -56,7 +57,7 @@ import qualified Cardano.Ledger.Shelley.API as API
 
 type instance PreviousEra (BabbageEra c) = AlonzoEra c
 
-type instance TranslationContext (BabbageEra c) = ()
+type instance TranslationContext (BabbageEra c) = AlonzoGenesis
 
 instance
   (Crypto c) =>
@@ -70,7 +71,8 @@ instance
           nesBcur = nesBcur nes,
           nesEs = translateEra' ctxt $ nesEs nes,
           nesRu = nesRu nes,
-          nesPd = nesPd nes
+          nesPd = nesPd nes,
+          stashedAVVMAddresses = ()
         }
 
 instance Crypto c => TranslateEra (BabbageEra c) ShelleyGenesis where
@@ -137,8 +139,8 @@ instance Crypto c => TranslateEra (BabbageEra c) API.LedgerState where
   translateEra ctxt ls =
     pure
       API.LedgerState
-        { API._utxoState = translateEra' ctxt $ API._utxoState ls,
-          API._delegationState = API._delegationState ls
+        { API.lsUTxOState = translateEra' ctxt $ API.lsUTxOState ls,
+          API.lsDPState = API.lsDPState ls
         }
 
 instance Crypto c => TranslateEra (BabbageEra c) API.UTxOState where

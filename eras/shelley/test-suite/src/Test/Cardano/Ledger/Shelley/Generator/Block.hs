@@ -126,7 +126,7 @@ genBlockWithTxGen
             $ selectNextSlotWithLeader ge origChainState firstConsideredSlot
 
     -- Now we need to compute the KES period and get the set of hot keys.
-    let NewEpochState _ _ _ es _ _ = chainNes chainSt
+    let NewEpochState _ _ _ es _ _ _ = chainNes chainSt
         EpochState acnt _ ls _ pp _ = es
         kp@(KESPeriod kesPeriod_) = runShelleyBase $ kesPeriod nextSlot
         cs = chainOCertIssue chainSt
@@ -230,8 +230,8 @@ selectNextSlotWithLeader
           chainSt = tickChainState slotNo origChainState
           epochNonce = chainEpochNonce chainSt
           poolDistr = unPoolDistr . nesPd . chainNes $ chainSt
-          dpstate = (_delegationState . esLState . nesEs . chainNes) chainSt
-          (GenDelegs cores) = (_genDelegs . _dstate) dpstate
+          dpstate = (lsDPState . esLState . nesEs . chainNes) chainSt
+          (GenDelegs cores) = (_genDelegs . dpsDState) dpstate
           firstEpochSlot = slotFromEpoch (epochFromSlotNo slotNo)
           f = activeSlotCoeff testGlobals
           getUnitInterval :: Core.PParams era -> UnitInterval

@@ -29,6 +29,7 @@ import Cardano.Ledger.Coin
 import qualified Cardano.Ledger.Core as Core
 import Cardano.Ledger.Mary.Value (AssetName (..))
 import Cardano.Ledger.Shelley (ShelleyEra)
+import Cardano.Ledger.Shelley.LedgerState (StashedAVVMAddresses)
 import qualified Cardano.Ledger.Shelley.LedgerState as LedgerState
 import Cardano.Ledger.Shelley.TxBody (MIRPot (..))
 import Cardano.Ledger.Val (Val (..))
@@ -132,8 +133,12 @@ modelTestDelegations ::
   ( ElaborateEraModel era,
     Show (PredicateFailure (Core.EraRule "LEDGER" era)),
     Show (Core.Tx era),
+    Show (Core.TxOut era),
     Show (Core.Script era),
-    LedgerState.TransUTxOState Show era
+    Show (Core.PParams era),
+    Show (State (Core.EraRule "PPUP" era)),
+    Show (LedgerState.LedgerState era),
+    Show (StashedAVVMAddresses era)
   ) =>
   proxy era ->
   Coin ->
@@ -370,8 +375,9 @@ prop_null xs = counterexample (interpret res ++ show xs) res
     interpret False = "not . null $ "
 
 checkElaboratorResult ::
-  ( LedgerState.TransUTxOState Show era,
-    Show (Core.Tx era)
+  ( Show (LedgerState.LedgerState era),
+    Show (Core.Tx era),
+    Show (Core.PParams era)
   ) =>
   LedgerState.NewEpochState era ->
   EraElaboratorState era ->
@@ -514,9 +520,13 @@ modelGenTest ::
   forall era proxy.
   ( ElaborateEraModel era,
     Show (PredicateFailure (Core.EraRule "LEDGER" era)),
-    LedgerState.TransUTxOState Show era,
+    Show (LedgerState.LedgerState era),
     Show (Core.Tx era),
-    Show (Core.Script era)
+    Show (Core.TxOut era),
+    Show (Core.Script era),
+    Show (Core.PParams era),
+    Show (State (Core.EraRule "PPUP" era)),
+    Show (StashedAVVMAddresses era)
   ) =>
   proxy era ->
   Property
@@ -537,8 +547,12 @@ testModelShrinking ::
   ( ElaborateEraModel era,
     Show (PredicateFailure (Core.EraRule "LEDGER" era)),
     Show (Core.Tx era),
+    Show (Core.TxOut era),
     Show (Core.Script era),
-    LedgerState.TransUTxOState Show era
+    Show (Core.PParams era),
+    Show (State (Core.EraRule "PPUP" era)),
+    Show (LedgerState.LedgerState era),
+    Show (StashedAVVMAddresses era)
   ) =>
   proxy era ->
   Property
@@ -596,9 +610,13 @@ propertyShrinking ::
   forall era proxy.
   ( Show (PredicateFailure (Core.EraRule "LEDGER" era)),
     Show (Core.Tx era),
+    Show (Core.TxOut era),
     Show (Core.Script era),
-    LedgerState.TransUTxOState Show era,
-    ElaborateEraModel era
+    Show (Core.PParams era),
+    Show (State (Core.EraRule "PPUP" era)),
+    Show (LedgerState.LedgerState era),
+    ElaborateEraModel era,
+    Show (StashedAVVMAddresses era)
   ) =>
   proxy era ->
   (ModelGenesis (EraFeatureSet era), [ModelEpoch (EraFeatureSet era)]) ->
@@ -638,11 +656,14 @@ generateOneExample = do
 testDelegCombinations ::
   forall era proxy.
   ( ElaborateEraModel era,
-    -- Eq (PredicateFailure (Core.EraRule "LEDGER" era)),
     Show (PredicateFailure (Core.EraRule "LEDGER" era)),
-    LedgerState.TransUTxOState Show era,
+    Show (LedgerState.LedgerState era),
     Show (Core.Tx era),
-    Show (Core.Script era)
+    Show (Core.TxOut era),
+    Show (Core.Script era),
+    Show (Core.PParams era),
+    Show (State (Core.EraRule "PPUP" era)),
+    Show (StashedAVVMAddresses era)
   ) =>
   proxy era ->
   TestTree
@@ -666,9 +687,13 @@ modelUnitTests ::
   ( ElaborateEraModel era,
     Eq (PredicateFailure (Core.EraRule "LEDGER" era)),
     Show (PredicateFailure (Core.EraRule "LEDGER" era)),
-    LedgerState.TransUTxOState Show era,
+    Show (LedgerState.NewEpochState era),
     Show (Core.Tx era),
-    Show (Core.Script era)
+    Show (Core.TxOut era),
+    Show (Core.Script era),
+    Show (Core.PParams era),
+    Show (State (Core.EraRule "PPUP" era)),
+    Show (StashedAVVMAddresses era)
   ) =>
   proxy era ->
   TestTree

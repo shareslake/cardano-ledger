@@ -70,7 +70,8 @@ instance
           nesBcur = nesBcur nes,
           nesEs = translateEra' ctxt $ nesEs nes,
           nesRu = nesRu nes,
-          nesPd = nesPd nes
+          nesPd = nesPd nes,
+          stashedAVVMAddresses = ()
         }
 
 instance Crypto c => TranslateEra (AlonzoEra c) ShelleyGenesis where
@@ -138,8 +139,8 @@ instance Crypto c => TranslateEra (AlonzoEra c) API.LedgerState where
   translateEra ctxt ls =
     return
       API.LedgerState
-        { API._utxoState = translateEra' ctxt $ API._utxoState ls,
-          API._delegationState = API._delegationState ls
+        { API.lsUTxOState = translateEra' ctxt $ API.lsUTxOState ls,
+          API.lsDPState = API.lsDPState ls
         }
 
 instance Crypto c => TranslateEra (AlonzoEra c) API.UTxOState where

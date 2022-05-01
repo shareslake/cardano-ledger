@@ -18,10 +18,12 @@ import Cardano.Ledger.Alonzo.PlutusScriptApi
   )
 import Cardano.Ledger.Alonzo.Rules.Utxos
   ( TagMismatchDescription (..),
-    UtxosEvent (UpdateEvent),
+    UtxosEvent (..),
     UtxosPredicateFailure (..),
     invalidBegin,
     invalidEnd,
+    scriptFailuresToPlutusDebug,
+    scriptFailuresToPredicateFailure,
     validBegin,
     validEnd,
     (?!##),
@@ -102,7 +104,7 @@ instance
   Embed (PPUP era) (BabbageUTXOS era)
   where
   wrapFailed = UpdateFailure
-  wrapEvent = UpdateEvent
+  wrapEvent = AlonzoPpupToUtxosEvent
 
 utxosTransition ::
   forall era.
@@ -151,6 +153,14 @@ scriptsYes = do
   sysSt <- liftSTS $ asks systemStart
   ei <- liftSTS $ asks epochInfo
 
+  -- We intentionally run the PPUP rule before evaluating any Plutus scripts.
+  -- We do not want to waste computation running plutus scripts if the
+  -- transaction will fail due to `PPUP`
+  ppup' <-
+    trans @(Core.EraRule "PPUP" era) $
+      TRC
+        (PPUPEnv slot pp genDelegs, pup, strictMaybeToMaybe $ getField @"update" txb)
+
   let !_ = traceEvent validBegin ()
 
   {- sLst := collectTwoPhaseScriptInputs pp tx utxo -}
@@ -159,20 +169,15 @@ scriptsYes = do
       {- isValid tx = evalScripts tx sLst = True -}
       whenFailureFree $
         case evalScripts @era (getField @"_protocolVersion" pp) tx sLst of
-          Fails sss ->
+          Fails _ fs ->
             False
               ?!## ValidationTagMismatch
                 (getField @"isValid" tx)
-                (FailedUnexpectedly sss)
-          Passes -> pure ()
+                (FailedUnexpectedly (scriptFailuresToPredicateFailure fs))
+          Passes _ -> pure ()
     Left info -> failBecause (CollectErrors info)
 
   let !_ = traceEvent validEnd ()
-
-  ppup' <-
-    trans @(Core.EraRule "PPUP" era) $
-      TRC
-        (PPUPEnv slot pp genDelegs, pup, strictMaybeToMaybe $ getField @"update" txb)
 
   pure $! updateUTxOState u txb depositChange ppup'
 
@@ -199,8 +204,10 @@ scriptsNo = do
       {- sLst := collectTwoPhaseScriptInputs pp tx utxo -}
       {- isValid tx = evalScripts tx sLst = False -}
       case evalScripts @era (getField @"_protocolVersion" pp) tx sLst of
-        Passes -> False ?!## ValidationTagMismatch (getField @"isValid" tx) PassedUnexpectedly
-        Fails _sss -> pure ()
+        Passes _ -> False ?!## ValidationTagMismatch (getField @"isValid" tx) PassedUnexpectedly
+        Fails ps fs -> do
+          tellEvent (SuccessfulPlutusScriptsEvent ps)
+          tellEvent (FailedPlutusScriptsEvent (scriptFailuresToPlutusDebug fs))
     Left info -> failBecause (CollectErrors info)
 
   () <- pure $! traceEvent invalidEnd ()
